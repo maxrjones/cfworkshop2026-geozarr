@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How CF maps to Zarr and relates to GeoZarr.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  /* anchors */
+  --base:#1F3A5F;          /* deep navy */
+  --primary:#2F6FDE;       /* bright blue, accents only */
+  --white:#FFFFFF;
+  /* derived scale */
+  --base-dark:#16304F;
+  --base-deep:#0F1D30;     /* code background */
+  --tint-1:#DCE6F3;        /* lighter tint of base */
+  --tint-2:#F2F6FB;        /* lightest tint, panel fills */
+  --primary-dark:#1E51AC;  /* primary-colored text on tinted fills */
+  --primary-lift:#8DB8FF;  /* primary on dark backgrounds */
+  --primary-08:rgba(47,111,222,.08);
+  --primary-14:rgba(47,111,222,.14);
+  --neutral:#E8EEF6;       /* zebra rows, dividers */
+  --muted:#52627A;         /* secondary text, captions */
+  --code-fg:#E9EFF8;
+  --warn:#A85B00;
+  --warn-lift:#FFC98A;
+  /* type */
+  --serif:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --sans:"Source Sans 3",-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+
+.reveal{font-family:var(--sans);font-size:30px;color:var(--base-dark)}
+.reveal .slides section{
+  display:flex;flex-direction:column;align-items:flex-start;text-align:left;
+  justify-content:center;height:100%;box-sizing:border-box;padding:10px 14px 18px;
+}
+.reveal h1,.reveal h2,.reveal h3{
+  font-family:var(--serif);color:var(--base);letter-spacing:-.018em;
+  text-transform:none;line-height:1.12;margin:.1em 0 .4em;
+}
+.reveal h1{font-size:1.9em;font-weight:700}
+.reveal h2{font-size:1.4em;font-weight:700;margin-bottom:.45em}
+.reveal h2::before{
+  content:"";display:block;width:1.7em;height:.13em;border-radius:2px;
+  background:var(--primary);margin:0 0 .45em;
+}
+.reveal section[data-background-color] h2::before{background:var(--primary-lift)}
+.title-slide h1::before{content:none}
+.reveal h3{font-size:.85em;font-weight:600;margin-bottom:.25em}
+.reveal p,.reveal li{font-size:.74em;line-height:1.45;margin:0 0 .55em}
+.reveal .slides section>p{max-width:36em}
+.lede{font-size:.72em}
+.sub{font-size:.64em;color:var(--muted)}
+
+/* parallel items: left accent rule, no boxes */
+.items{width:100%;margin:0 0 .5em}
+.items>div{border-left:4px solid var(--tint-1);padding:.05em 0 .05em .8em;margin:0 0 .65em;max-width:38em}
+.items>div>p{margin:0;font-size:.66em}
+.items>div>p>strong:first-child{color:var(--primary-dark)}
+.reveal ul{margin:0 0 .4em 1em}
+.reveal li{margin-bottom:.3em}
+.reveal strong{color:var(--base);font-weight:700}
+.reveal em{color:var(--muted);font-style:italic}
+.reveal .small{font-size:.56em;color:var(--muted)}
+.reveal a{color:var(--primary-dark)}
+
+/* layout columns (structural, unboxed) */
+.cols{display:flex;gap:.9em;align-items:stretch;width:100%;margin:0 0 .6em}
+.col{flex:1;min-width:0}
+.col.wide{flex:1.35}
+
+/* two plain text columns divided by a rule */
+.twoup{display:flex;gap:1.3em;width:100%;margin:0 0 .5em}
+.twoup>div{flex:1;min-width:0}
+.twoup>div+div{border-left:1px solid var(--tint-1);padding-left:1.3em}
+.twoup p{font-size:.64em}
+
+/* quiet takeaway line replacing the old band */
+.takeaway{
+  margin-top:.7em;width:100%;border-top:3px solid var(--tint-1);
+  padding-top:.45em;font-family:var(--serif);font-size:.68em;line-height:1.4;
+  color:var(--base);
+}
+.takeaway strong{color:var(--primary-dark)}
+
+/* inline SVG figures */
+.fig{width:100%;height:auto;margin:0 0 .45em;display:block}
+.fig text{font-family:var(--sans)}
+.fig .mono{font-family:var(--mono)}
+
+/* tables */
+.reveal table{border-collapse:collapse;width:100%;font-size:.55em;margin:0 0 .6em}
+.reveal th{
+  background:var(--base);color:var(--white);font-weight:600;text-align:left;
+  padding:.45em .7em;
+}
+.reveal td{padding:.42em .7em;border-bottom:1px solid var(--neutral);vertical-align:top}
+.reveal tbody tr:nth-child(even){background:var(--tint-2)}
+.reveal td code,.reveal p code,.reveal li code{
+  font-family:var(--mono);font-size:.92em;background:var(--primary-08);
+  color:var(--base-dark);padding:.05em .3em;border-radius:5px;
+}
+
+/* code blocks */
+.reveal pre{
+  width:100%;box-sizing:border-box;background:var(--base-deep);color:var(--code-fg);
+  border-radius:12px;padding:.7em .9em;margin:0 0 .5em;
+  font-family:var(--mono);font-size:.52em;line-height:1.55;
+  box-shadow:0 10px 24px rgba(15,29,48,.25);overflow-x:auto;
+}
+.reveal pre code{font-family:var(--mono);background:none;padding:0;color:inherit}
+.tk{color:var(--primary-lift)}          /* keys */
+.tv{color:#A8E6C1}                      /* string values */
+.tu{color:#FFD08A}                      /* numbers, units */
+.tg{color:#7E93B0}                      /* punctuation, braces */
+.tc{color:#6C7E99;font-style:italic}    /* comments */
+
+/* quotes */
+.quote{
+  border-left:4px solid var(--primary);padding:.1em 0 .1em .7em;margin:0 0 .6em;
+  font-size:.72em;line-height:1.45;color:var(--base-dark);
+}
+.quote .who{display:block;font-size:.78em;color:var(--muted);margin-top:.2em}
+.pull{
+  font-family:var(--serif);font-size:1.05em;line-height:1.3;color:var(--base);
+  border-left:none;padding:0;margin:.2em 0 .1em;
+}
+.pull .who{display:block;font-family:var(--sans);font-size:.5em;color:var(--muted);margin-top:.35em}
+
+/* key list beside code (letters echo the code comments) */
+ul.keys{list-style:none;margin:0;padding:0}
+ul.keys li{font-size:.6em;margin:0 0 .6em;line-height:1.45}
+ul.keys li b{font-family:var(--mono);font-weight:600;color:var(--primary-dark);margin-right:.45em}
+
+/* dark slides */
+.title-slide,.reveal section[data-background-color]{color:var(--white)}
+.reveal section[data-background-color] h1,
+.reveal section[data-background-color] h2,
+.reveal section[data-background-color] h3,
+.reveal section[data-background-color] strong{color:var(--white)}
+.reveal section[data-background-color] p{color:rgba(255,255,255,.93)}
+.reveal section[data-background-color] em{color:#B9C6DB}
+.reveal section[data-background-color] .small{color:#9FB0C8}
+.reveal section[data-background-color] .quote{color:rgba(255,255,255,.93);border-color:var(--primary-lift)}
+.reveal section[data-background-color] .quote .who{color:#9FB0C8}
+.reveal section[data-background-color] .takeaway{border-color:rgba(255,255,255,.22);color:#E6EDF7}
+.reveal section[data-background-color] .takeaway strong{color:var(--primary-lift)}
+.reveal section[data-background-color] .items>div{border-left-color:rgba(255,255,255,.22)}
+.reveal section[data-background-color] .items>div>p{color:rgba(255,255,255,.93)}
+.reveal section[data-background-color] .items>div>p>strong:first-child{color:var(--primary-lift)}
+.title-slide{justify-content:center}
+
+/* timeline strip */
+.tl{display:flex;gap:.5em;width:100%;margin:0 0 .6em}
+.tl .step{flex:1;background:var(--primary-08);border-top:5px solid var(--tint-1);
+  border-radius:0 0 10px 10px;padding:.4em .5em}
+.tl .step.hot{border-top-color:var(--primary)}
+.tl .step .d{font-family:var(--mono);font-size:.46em;color:var(--primary-dark);font-weight:600}
+.tl .step .t{font-size:.6em;font-weight:700;color:var(--base);margin:.15em 0}
+.tl .step .x{font-size:.5em;color:var(--muted);line-height:1.35}
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- 1 · title -->
+<section class="title-slide" data-background-color="#1F3A5F">
+  <h1>How CF maps to Zarr and relates to GeoZarr.</h1>
+  <p style="font-size:.8em;margin-top:.4em"><strong style="color:#FFFFFF">Max Jones</strong>, GeoZarr SWG Chair</p>
+  <img class="fig" src="assets/title-figure.png"
+       style="max-width:46%;margin:.8em auto;align-self:center"
+       alt="Three drawings side by side: a globe, two hands shaking, and the Zarr logo drawn as a pink chunked cube. The earth science community and the Zarr community meeting in the middle.">
+  <p style="font-size:.62em;color:#B9C6DB">CF Conventions Community Workshop. 22 September, 2026</p>
+</section>
+
+<!-- 2 · outline -->
+<section>
+  <h2>Outline.</h2>
+  <div class="items">
+    <div><p><strong>Context.</strong> How CF's relationship with GeoZarr has evolved over time.</p></div>
+    <div><p><strong>Building blocks.</strong> How CF's capabilities can be incorporated into GeoZarr.</p></div>
+    <div><p><strong>Consensus.</strong> What people generally agree about, and what they don't.</p></div>
+    <div><p><strong>What's needed.</strong> How the CF community can support Zarr for climate and forecasting.</p></div>
+  </div>
+  <div class="takeaway">CF in GeoZarr is not settled. This is your invitation to help.</div>
+</section>
+
+<!-- 3 · context: 4 years, 5 pivots -->
+<section>
+  <h2>Four years, five pivots.</h2>
+  <div class="tl">
+    <div class="step"><div class="d">2022-01</div><div class="t">MUST.</div><div class="x">CF required on every variable in the first draft.</div></div>
+    <div class="step"><div class="d">2025-03</div><div class="t">SHOULD.</div><div class="x">Issue #60. Real NASA data fails v0.4, CF demoted.</div></div>
+    <div class="step"><div class="d">2025-04</div><div class="t">Optional.</div><div class="x">Unified data model enables CF, does not require it.</div></div>
+    <div class="step hot"><div class="d">2025-12</div><div class="t">Reset.</div><div class="x">Commit 824906b deletes every normative CF sentence.</div></div>
+    <div class="step"><div class="d">2026</div><div class="t">Re-entry.</div><div class="x">CF returns as registered conventions, three ways at once.</div></div>
+    <div class="step"><div class="d">2026-08</div><div class="t">Contested.</div><div class="x">Semantic interop leads the survey. Coordinate encoding still has two rival drafts.</div></div>
+  </div>
+  <p style="font-size:.66em">Along the way, a store written in 2022 never re-chunks a byte. Every turn in this story is a <strong>metadata operation</strong>.</p>
+  <div class="takeaway">Each pivot moved CF from prerequisite toward component. The endpoint is not settled.</div>
+</section>
+
+<!-- 4 · why direct CF-in-Zarr didn't work -->
+<section>
+  <h2>Why CF in Zarr directly did not work.</h2>
+  <div class="twoup">
+    <div>
+      <h3>1. Coordinates that do not scale.</h3>
+<pre><code><span class="tc">// netCDF-style. every value.</span>
+<span class="tk">"lat"</span><span class="tg">:</span> <span class="tg">[</span><span class="tu">59.995</span><span class="tg">,</span> <span class="tu">59.985</span><span class="tg">,</span> <span class="tu">59.975</span><span class="tg">,</span> <span class="tc">… 12,000 more …</span><span class="tg">]</span>
+
+<span class="tc">// the raster world. six numbers.</span>
+<span class="tk">"spatial:transform"</span><span class="tg">:</span> <span class="tg">[</span><span class="tu">0.01</span><span class="tg">,</span> <span class="tu">0</span><span class="tg">,</span> <span class="tu">-180</span><span class="tg">,</span> <span class="tu">0</span><span class="tg">,</span> <span class="tu">-0.01</span><span class="tg">,</span> <span class="tu">60</span><span class="tg">]</span></code></pre>
+      <p style="font-size:.62em">At scale the arrays dwarf the data, rounding quietly breaks exact regularity, and CF has no way to <strong>assert</strong> that spacing is even.</p>
+    </div>
+    <div>
+      <h3>2. A CRS encoding tools do not speak.</h3>
+<pre><code><span class="tc">// CF Appendix F. a dummy variable of attributes.</span>
+<span class="tk">"crs"</span><span class="tg">:</span> <span class="tg">{</span> <span class="tk">"grid_mapping_name"</span><span class="tg">:</span> <span class="tv">"transverse_mercator"</span><span class="tg">,</span>
+         <span class="tk">"scale_factor_at_central_meridian"</span><span class="tg">:</span> <span class="tu">0.9996</span><span class="tg">,</span> <span class="tc">…</span> <span class="tg">}</span>
+
+<span class="tc">// what pyproj, rioxarray, and GDAL speak.</span>
+<span class="tk">"proj:code"</span><span class="tg">:</span> <span class="tv">"EPSG:32633"</span></code></pre>
+      <p style="font-size:.62em">CF's vocabulary cannot express everything the geospatial software stack emits.</p>
+    </div>
+  </div>
+  <div class="takeaway"><strong>EOPF proved both in practice.</strong> Sentinel's data model implemented the CF-MUST draft, hit both walls, and needed a better solution.</div>
+</section>
+
+<!-- 5 · zarr conventions -->
+<section>
+  <h2>Zarr conventions. Composable by design.</h2>
+  <img class="fig" src="assets/pillars.png" style="max-width:74%;margin:0 auto .45em;align-self:center"
+       alt="A hand-drawn slab labelled GeoZarr resting on four pillars. Three are solid and finished: proj, multiscales, and spatial. The fourth, labelled CF, is a faint hatched outline with no top, annotated with three open questions: cs? coords? NZ?">
+  <div class="takeaway">Three conventions took hold. The direct CF registration, proposed February 2026, <strong>faded out</strong> instead.</div>
+</section>
+
+<!-- 6 · zarr conventions: the registration mechanism -->
+<section>
+  <h2>Registration, in practice.</h2>
+  <div class="cols">
+    <div class="col wide">
+<pre><code><span class="tc">// sst.zarr group "attributes" (illustrative; UUIDs shortened)</span>
+<span class="tg">{</span>
+  <span class="tk">"zarr_conventions"</span><span class="tg">:</span> <span class="tg">[</span>                          <span class="tc">// A</span>
+    <span class="tg">{</span><span class="tk">"uuid"</span><span class="tg">:</span> <span class="tv">"d0e6…"</span><span class="tg">,</span> <span class="tk">"name"</span><span class="tg">:</span> <span class="tv">"proj"</span><span class="tg">},</span>
+    <span class="tg">{</span><span class="tk">"uuid"</span><span class="tg">:</span> <span class="tv">"9e12…"</span><span class="tg">,</span> <span class="tk">"name"</span><span class="tg">:</span> <span class="tv">"spatial"</span><span class="tg">},</span>
+    <span class="tg">{</span><span class="tk">"uuid"</span><span class="tg">:</span> <span class="tv">"41af…"</span><span class="tg">,</span> <span class="tk">"name"</span><span class="tg">:</span> <span class="tv">"multiscales"</span><span class="tg">}</span>
+  <span class="tg">],</span>
+  <span class="tk">"proj:code"</span><span class="tg">:</span> <span class="tv">"EPSG:4326"</span><span class="tg">,</span>                     <span class="tc">// B</span>
+  <span class="tk">"spatial:bbox"</span><span class="tg">:</span> <span class="tg">[</span><span class="tu">-180</span><span class="tg">,</span> <span class="tu">-60</span><span class="tg">,</span> <span class="tu">180</span><span class="tg">,</span> <span class="tu">60</span><span class="tg">]</span>           <span class="tc">// C</span>
+<span class="tg">}</span></code></pre>
+    </div>
+    <div class="col">
+      <ul class="keys">
+        <li><b>A</b><strong>Registration.</strong> Small conventions declared side by side. Identity is the <code>uuid</code>, never the <code>name</code>.</li>
+        <li><b>B</b><strong>proj.</strong> CRS as EPSG code, WKT2 or PROJJSON.</li>
+        <li><b>C</b><strong>spatial.</strong> Extent and transform, split off from the CRS.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="takeaway"><strong><code>proj</code>, <code>spatial</code>, and <code>multiscales</code> are widely implemented.</strong> GDAL, rioxarray, and web viewers read them today.</div>
+</section>
+
+<!-- 7 · what conventions mean for CF: three categories -->
+<section>
+  <h2>What Zarr conventions mean for CF.</h2>
+  <p style="font-size:.68em">CF conventions can be decomposed based on whether the metadata is <em>required for correctly decoding values</em> and whether the metadata is <em>domain agnostic</em>.</p>
+  <svg class="fig" viewBox="0 0 900 248" role="img" aria-label="CF decomposed into three categories">
+    <rect x="20" y="14" width="860" height="64" rx="10" fill="var(--base-deep)"/>
+    <text x="40" y="40" font-size="19" font-weight="600" fill="#E9EFF8">Required to understand array values properly</text>
+    <text x="40" y="62" font-size="14" fill="#9FB0C8">packing and tie-point codecs · virtual arrays · string and unsigned data types</text>
+    <rect x="20" y="92" width="860" height="64" rx="10" fill="var(--tint-1)"/>
+    <text x="40" y="118" font-size="19" font-weight="600" fill="var(--base)">Domain agnostic</text>
+    <text x="40" y="140" font-size="14" fill="var(--muted)">coordinates · units · calendars · flags · missing data · cell measures · labels · references · multiscales</text>
+    <rect x="20" y="170" width="860" height="64" rx="10" fill="var(--primary)"/>
+    <text x="40" y="196" font-size="19" font-weight="600" fill="#FFFFFF">Earth science / geospatial specific</text>
+    <text x="40" y="218" font-size="14" fill="#DCE6F3">CRS · extent and transform · 2-D geolocation · geometry · parametric vertical · vocabulary slices</text>
+  </svg>
+  <div class="takeaway">The companion principle is to bring CF's capabilities and drop CF's netCDF-era workarounds.</div>
+</section>
+
+<!-- 8 · example, data encoding: scale/offset -->
+<section>
+  <h2>Data encoding. Scale and offset.</h2>
+  <div class="twoup">
+    <div>
+      <h3>CF today. Attributes readers must know.</h3>
+<pre><code><span class="tc">// sst.zarr array attributes</span>
+<span class="tk">"scale_factor"</span><span class="tg">:</span> <span class="tu">0.01</span><span class="tg">,</span>
+<span class="tk">"add_offset"</span><span class="tg">:</span> <span class="tu">273.15</span><span class="tg">,</span>
+<span class="tk">"_FillValue"</span><span class="tg">:</span> <span class="tu">-9999</span></code></pre>
+      <p style="font-size:.62em">A reader that ignores these gets <strong>wrong values</strong>, integers instead of kelvin. That fails the safely-ignorable test.</p>
+    </div>
+    <div>
+      <h3>Zarr. A codec in the pipeline.</h3>
+<pre><code><span class="tc">// sst.zarr array metadata</span>
+<span class="tk">"codecs"</span><span class="tg">:</span> <span class="tg">[</span>
+  <span class="tg">{</span><span class="tk">"name"</span><span class="tg">:</span> <span class="tv">"fixedscaleoffset"</span><span class="tg">,</span>
+   <span class="tk">"configuration"</span><span class="tg">:</span> <span class="tg">{</span><span class="tk">"scale"</span><span class="tg">:</span> <span class="tu">100</span><span class="tg">,</span> <span class="tk">"offset"</span><span class="tg">:</span> <span class="tu">273.15</span><span class="tg">}}</span>
+<span class="tg">]</span></code></pre>
+      <p style="font-size:.62em">Every Zarr reader unpacks it, with <strong>no CF knowledge at all</strong>. The capability survives, the attribute convention does not need to.</p>
+    </div>
+  </div>
+  <div class="takeaway">Same capability, better home. Raised in <a href="https://github.com/zarr-developers/geozarr-spec/issues/52" target="_blank" rel="noopener">issue #52</a> in 2024, cross-community agreement in <a href="https://geozarr.org/minutes/" target="_blank" rel="noopener">August 2026</a>.</div>
+</section>
+
+<!-- 9 · example, geospatial: CRS -->
+<section>
+  <h2>Geospatial semantics. The CRS.</h2>
+  <div class="cols">
+    <div class="col wide">
+<pre><code><span class="tc">// the proj convention. three interchangeable forms.</span>
+<span class="tk">"proj:code"</span><span class="tg">:</span> <span class="tv">"EPSG:32633"</span>
+
+<span class="tk">"proj:wkt2"</span><span class="tg">:</span> <span class="tv">"PROJCRS[\"WGS 84 / UTM 33N\", …]"</span>
+
+<span class="tk">"proj:projjson"</span><span class="tg">:</span> <span class="tg">{</span> <span class="tk">"type"</span><span class="tg">:</span> <span class="tv">"ProjectedCRS"</span><span class="tg">,</span> <span class="tc">…</span> <span class="tg">}</span></code></pre>
+    </div>
+    <div class="col">
+      <p style="font-size:.62em">Adopted from STAC's proj extension. What pyproj, rioxarray, and GDAL <strong>already emit and consume</strong>.</p>
+      <p style="font-size:.62em">CF's <code>grid_mapping</code> vocabulary survives as a <strong>one-way import alias</strong>. Read the old form, write the new one.</p>
+    </div>
+  </div>
+  <div class="takeaway">The CRS question that stayed open in CF for three years was answered by adopting the geospatial industry's encoding.</div>
+</section>
+
+<!-- 10 · example, domain-agnostic: coordinates -->
+<section>
+  <h2>Domain-agnostic. Most pressing: coordinates.</h2>
+  <p>Explicit coordinates are the top-ranked need in the August survey and the gap blocking netCDF-style data. Today there are <strong>multiple competing proposals</strong>, two of them substantial drafts.</p>
+  <div class="items">
+    <div><p><strong>coords.</strong> A discovery layer in the domain-agnostic base. Maps each dimension to a descriptor. Explicit array, inline values, start/end/step interval, or a reference to another convention.</p></div>
+    <div><p><strong>cs.</strong> Coordinate sets on an OGC referencing model, in the geospatial layer. Owns CRS, calendars, parametric vertical, bounds. The next talk presents it.</p></div>
+    <div><p><strong>Around the edges.</strong> <code>geolocation</code> for 2-D lat/lon, <code>nz</code> re-hosting netCDF structure below the conventions layer.</p></div>
+  </div>
+  <div class="takeaway">One capability, two drafts with duplication. The next three slides show the same store under each proposal.</div>
+</section>
+
+
+<!-- 11 · 1-D coordinates in coords -->
+<section>
+  <h2>1-D coordinates in coords.</h2>
+  <div class="cols">
+    <div class="col">
+<pre><code><span class="tc">sst.zarr/</span>
+<span class="tg">├─</span> zarr.json      <span class="tc">root group</span>
+<span class="tg">├─</span> <span class="tk">sst/</span>           <span class="tc">float32 (time, lat, lon)</span>
+<span class="tg">├─</span> <span class="tv">time/</span>          <span class="tc">float64 (time)</span>
+<span class="tg">├─</span> <span class="tv">lat/</span>           <span class="tc">float64 (lat)</span>
+<span class="tg">└─</span> <span class="tv">lon/</span>           <span class="tc">float64 (lon)</span></code></pre>
+      <p style="font-size:.58em">The xarray layout, untouched. Coordinate values stay in sibling arrays.</p>
+    </div>
+    <div class="col wide">
+<pre><code><span class="tc">// sst/zarr.json "attributes"</span>
+<span class="tk">"zarr_conventions"</span><span class="tg">:</span> <span class="tg">[</span>
+  <span class="tg">{</span><span class="tk">"uuid"</span><span class="tg">:</span> <span class="tv">"6ca4454a-…"</span><span class="tg">,</span> <span class="tk">"name"</span><span class="tg">:</span> <span class="tv">"coords"</span><span class="tg">}</span>
+<span class="tg">],</span>
+<span class="tk">"coords:coordinates"</span><span class="tg">:</span> <span class="tg">{</span>
+  <span class="tk">"time"</span><span class="tg">:</span> <span class="tg">{</span><span class="tk">"type"</span><span class="tg">:</span> <span class="tv">"array"</span><span class="tg">,</span> <span class="tk">"path"</span><span class="tg">:</span> <span class="tv">"../time"</span><span class="tg">},</span>
+  <span class="tk">"lat"</span><span class="tg">:</span>  <span class="tg">{</span><span class="tk">"type"</span><span class="tg">:</span> <span class="tv">"array"</span><span class="tg">,</span> <span class="tk">"path"</span><span class="tg">:</span> <span class="tv">"../lat"</span><span class="tg">},</span>
+  <span class="tk">"lon"</span><span class="tg">:</span>  <span class="tg">{</span><span class="tk">"type"</span><span class="tg">:</span> <span class="tv">"array"</span><span class="tg">,</span> <span class="tk">"path"</span><span class="tg">:</span> <span class="tv">"../lon"</span><span class="tg">}</span>
+<span class="tg">},</span>
+<span class="tk">"coords:version"</span><span class="tg">:</span> <span class="tu">1</span></code></pre>
+      <p style="font-size:.58em">One descriptor per dimension, on the <strong>data array</strong>, saying how the values are represented and where they live. Other descriptor shapes: inline values, implicit <code>start</code>/<code>end</code>/<code>step</code>, or a <code>reference</code> delegating to another convention such as <code>spatial</code>.</p>
+    </div>
+  </div>
+  <div class="takeaway">A discovery layer over existing practice. The store does not change, the metadata explains it.</div>
+</section>
+
+<!-- 12 · 1-D coordinates in cs -->
+<section>
+  <h2>1-D coordinates in cs.</h2>
+  <div class="cols">
+    <div class="col">
+<pre><code><span class="tc">sst.zarr/</span>
+<span class="tg">├─</span> zarr.json      <span class="tc">root group</span>
+<span class="tg">├─</span> <span class="tk">sst/</span>           <span class="tc">float32 (time, lat, lon)</span>
+<span class="tg">└─</span> <span class="tv">time/</span>          <span class="tc">float64 (time)</span>
+
+<span class="tc">// no lat/ or lon/ arrays. the regular</span>
+<span class="tc">// grid lives in the metadata itself.</span></code></pre>
+      <p style="font-size:.58em">Regular axes need no arrays at all. Irregular ones, like <code>time</code> here, stay as referenced arrays.</p>
+    </div>
+    <div class="col wide">
+<pre><code><span class="tc">// zarr.json group "attributes" (abridged)</span>
+<span class="tk">"zarr_conventions"</span><span class="tg">:</span> <span class="tg">[</span><span class="tg">{</span><span class="tv">"cs"</span><span class="tg">},</span> <span class="tg">{</span><span class="tv">"ref"</span><span class="tg">},</span> <span class="tg">{</span><span class="tv">"proj"</span><span class="tg">}</span><span class="tg">],</span>
+<span class="tk">"crs"</span><span class="tg">:</span> <span class="tg">{</span>
+  <span class="tk">"WGS84"</span><span class="tg">:</span> <span class="tg">{</span> <span class="tk">"type"</span><span class="tg">:</span> <span class="tv">"planar"</span><span class="tg">,</span>
+    <span class="tk">"axes"</span><span class="tg">:</span> <span class="tg">{</span> <span class="tk">"lon"</span><span class="tg">:</span> <span class="tg">{</span><span class="tk">"coordinates"</span><span class="tg">:</span> <span class="tg">[{</span><span class="tk">"unit"</span><span class="tg">:</span> <span class="tv">"degrees"</span><span class="tg">,</span>
+      <span class="tk">"values"</span><span class="tg">:</span> <span class="tg">{</span><span class="tk">"regular"</span><span class="tg">:</span> <span class="tg">[</span><span class="tu">-179.995</span><span class="tg">,</span> <span class="tu">0.01</span><span class="tg">]}}]},</span>
+      <span class="tk">"lat"</span><span class="tg">:</span> <span class="tc">… same shape …</span> <span class="tg">},</span>
+    <span class="tk">"id"</span><span class="tg">:</span> <span class="tg">{</span><span class="tk">"proj:code"</span><span class="tg">:</span> <span class="tv">"EPSG:4326"</span><span class="tg">}</span> <span class="tg">},</span>
+  <span class="tk">"standard_calendar"</span><span class="tg">:</span> <span class="tg">{</span> <span class="tk">"type"</span><span class="tg">:</span> <span class="tv">"temporal"</span><span class="tg">,</span>
+    <span class="tk">"axes"</span><span class="tg">:</span> <span class="tg">{</span> <span class="tk">"time"</span><span class="tg">:</span> <span class="tg">{</span><span class="tk">"coordinates"</span><span class="tg">:</span> <span class="tg">[{</span>
+      <span class="tk">"time"</span><span class="tg">:</span> <span class="tg">{</span><span class="tk">"unit"</span><span class="tg">:</span> <span class="tv">"day"</span><span class="tg">,</span> <span class="tk">"epoch"</span><span class="tg">:</span> <span class="tv">"1900-01-01"</span><span class="tg">,</span>
+               <span class="tk">"calendar"</span><span class="tg">:</span> <span class="tv">"standard"</span><span class="tg">},</span>
+      <span class="tk">"values"</span><span class="tg">:</span> <span class="tg">{</span><span class="tk">"external"</span><span class="tg">:</span> <span class="tg">{</span><span class="tk">"ref"</span><span class="tg">:</span> <span class="tg">{</span><span class="tk">"node"</span><span class="tg">:</span> <span class="tv">"../time"</span><span class="tg">}}}}]}}}</span>
+<span class="tg">}</span></code></pre>
+      <p style="font-size:.58em">A <strong>coordinate set</strong> grouped per CRS, on the OGC referencing model. Values are inline regular pairs, embedded lists, or external arrays via <code>ref</code>.</p>
+    </div>
+  </div>
+  <div class="takeaway">Regularity is directly expressible, the assertion CF lacks. Patrick's talk covers the design in depth.</div>
+</section>
+
+<!-- 13 · 1-D coordinates in nz -->
+<section>
+  <h2>1-D coordinates in nz.</h2>
+  <div class="cols">
+    <div class="col">
+<pre><code><span class="tc">sst.zarr/</span>
+<span class="tg">├─</span> zarr.json      <span class="tc">root group</span>
+<span class="tg">├─</span> <span class="tk">sst/</span>           <span class="tc">float32 (time, lat, lon)</span>
+<span class="tg">├─</span> <span class="tv">time/</span>          <span class="tc">float64 (time)</span>
+<span class="tg">├─</span> <span class="tv">lat/</span>           <span class="tc">float64 (lat)</span>
+<span class="tg">└─</span> <span class="tv">lon/</span>           <span class="tc">float64 (lon)</span></code></pre>
+      <p style="font-size:.58em">An array named <code>lat</code> whose only dimension is <code>lat</code> <strong>is</strong> the coordinate. Structural, no attribute needed.</p>
+    </div>
+    <div class="col wide">
+<pre><code><span class="tc">// zarr.json root group "attributes"</span>
+<span class="tk">"zarr_conventions"</span><span class="tg">:</span> <span class="tg">[</span>
+  <span class="tg">{</span><span class="tk">"uuid"</span><span class="tg">:</span> <span class="tv">"d0a980b5-…"</span><span class="tg">,</span> <span class="tk">"name"</span><span class="tg">:</span> <span class="tv">"NZ-1.0"</span><span class="tg">}</span>
+<span class="tg">],</span>
+<span class="tk">"conventions"</span><span class="tg">:</span> <span class="tv">"NZ-1.0 CF-1.12"</span>
+
+<span class="tc">// lat/zarr.json. the name matches its one dimension.</span>
+<span class="tk">"shape"</span><span class="tg">:</span> <span class="tg">[</span><span class="tu">12000</span><span class="tg">],</span> <span class="tk">"dimension_names"</span><span class="tg">:</span> <span class="tg">[</span><span class="tv">"lat"</span><span class="tg">],</span>
+<span class="tk">"attributes"</span><span class="tg">:</span> <span class="tg">{</span>
+  <span class="tk">"standard_name"</span><span class="tg">:</span> <span class="tv">"latitude"</span><span class="tg">,</span>
+  <span class="tk">"units"</span><span class="tg">:</span> <span class="tv">"degrees_north"</span>
+<span class="tg">}</span></code></pre>
+      <p style="font-size:.58em">The NUG coordinate-variable rule, re-hosted on Zarr v3. Unmodified <strong>CF-1.12</strong> applies on top through the <code>conventions</code> string. No new coordinate vocabulary at all.</p>
+    </div>
+  </div>
+  <div class="takeaway">The conservative answer. Everything CF software already knows keeps working, and the scaling problem stays.</div>
+</section>
+
+
+<!-- 14 · the option space, aligned -->
+<section>
+  <h2>The same options, different spellings.</h2>
+  <svg class="fig" viewBox="0 0 900 330" role="img" aria-label="Three kinds of 1-D coordinate axes and each proposal's encoding of them">
+    <text x="430" y="26" font-size="15" font-weight="600" fill="var(--base)" text-anchor="middle" class="mono">coords</text>
+    <text x="590" y="26" font-size="15" font-weight="600" fill="var(--base)" text-anchor="middle" class="mono">cs</text>
+    <text x="760" y="26" font-size="15" font-weight="600" fill="var(--muted)" text-anchor="middle" class="mono">nz</text>
+
+    <rect x="20" y="40" width="860" height="84" rx="10" fill="var(--tint-2)"/>
+    <text x="36" y="70" font-size="16" font-weight="600" fill="var(--base)">Regularly spaced</text>
+    <line x1="36" y1="98" x2="324" y2="98" stroke="var(--base)" stroke-width="2"/>
+    <line x1="36" y1="91" x2="36" y2="105" stroke="var(--base)" stroke-width="2"/>
+    <line x1="84" y1="91" x2="84" y2="105" stroke="var(--base)" stroke-width="2"/>
+    <line x1="132" y1="91" x2="132" y2="105" stroke="var(--base)" stroke-width="2"/>
+    <line x1="180" y1="91" x2="180" y2="105" stroke="var(--base)" stroke-width="2"/>
+    <line x1="228" y1="91" x2="228" y2="105" stroke="var(--base)" stroke-width="2"/>
+    <line x1="276" y1="91" x2="276" y2="105" stroke="var(--base)" stroke-width="2"/>
+    <line x1="324" y1="91" x2="324" y2="105" stroke="var(--base)" stroke-width="2"/>
+    <text x="430" y="76" font-size="15" font-weight="600" fill="var(--primary-dark)" text-anchor="middle" class="mono">interval</text>
+    <text x="430" y="98" font-size="12" fill="var(--muted)" text-anchor="middle" class="mono">start / end / step</text>
+    <text x="590" y="76" font-size="15" font-weight="600" fill="var(--primary-dark)" text-anchor="middle" class="mono">regular</text>
+    <text x="590" y="98" font-size="12" fill="var(--muted)" text-anchor="middle" class="mono">[start, step]</text>
+    <text x="760" y="76" font-size="15" font-weight="600" fill="var(--muted)" text-anchor="middle" class="mono">array</text>
+    <text x="760" y="98" font-size="12" fill="var(--muted)" text-anchor="middle">every value, still</text>
+
+    <rect x="20" y="134" width="860" height="84" rx="10" fill="none"/>
+    <text x="36" y="164" font-size="16" font-weight="600" fill="var(--base)">Irregular</text>
+    <line x1="36" y1="192" x2="324" y2="192" stroke="var(--base)" stroke-width="2"/>
+    <line x1="36" y1="185" x2="36" y2="199" stroke="var(--base)" stroke-width="2"/>
+    <line x1="62" y1="185" x2="62" y2="199" stroke="var(--base)" stroke-width="2"/>
+    <line x1="120" y1="185" x2="120" y2="199" stroke="var(--base)" stroke-width="2"/>
+    <line x1="142" y1="185" x2="142" y2="199" stroke="var(--base)" stroke-width="2"/>
+    <line x1="214" y1="185" x2="214" y2="199" stroke="var(--base)" stroke-width="2"/>
+    <line x1="240" y1="185" x2="240" y2="199" stroke="var(--base)" stroke-width="2"/>
+    <line x1="324" y1="185" x2="324" y2="199" stroke="var(--base)" stroke-width="2"/>
+    <text x="430" y="170" font-size="15" font-weight="600" fill="var(--primary-dark)" text-anchor="middle" class="mono">array</text>
+    <text x="430" y="192" font-size="12" fill="var(--muted)" text-anchor="middle" class="mono">path: "../time"</text>
+    <text x="590" y="170" font-size="15" font-weight="600" fill="var(--primary-dark)" text-anchor="middle" class="mono">external</text>
+    <text x="590" y="192" font-size="12" fill="var(--muted)" text-anchor="middle" class="mono">ref: {node: …}</text>
+    <text x="760" y="170" font-size="15" font-weight="600" fill="var(--muted)" text-anchor="middle" class="mono">array</text>
+    <text x="760" y="192" font-size="12" fill="var(--muted)" text-anchor="middle">name = dimension</text>
+
+    <rect x="20" y="228" width="860" height="84" rx="10" fill="var(--tint-2)"/>
+    <text x="36" y="258" font-size="16" font-weight="600" fill="var(--base)">A few values or labels</text>
+    <line x1="36" y1="286" x2="324" y2="286" stroke="var(--tint-1)" stroke-width="2"/>
+    <circle cx="70" cy="286" r="5" fill="var(--base)"/>
+    <circle cx="150" cy="286" r="5" fill="var(--base)"/>
+    <circle cx="230" cy="286" r="5" fill="var(--base)"/>
+    <circle cx="310" cy="286" r="5" fill="var(--base)"/>
+    <text x="430" y="264" font-size="15" font-weight="600" fill="var(--primary-dark)" text-anchor="middle" class="mono">inline</text>
+    <text x="430" y="286" font-size="12" fill="var(--muted)" text-anchor="middle" class="mono">values in metadata</text>
+    <text x="590" y="264" font-size="15" font-weight="600" fill="var(--primary-dark)" text-anchor="middle" class="mono">explicit</text>
+    <text x="590" y="286" font-size="12" fill="var(--muted)" text-anchor="middle" class="mono">values in metadata</text>
+    <text x="760" y="264" font-size="15" font-weight="600" fill="var(--muted)" text-anchor="middle" class="mono">array</text>
+    <text x="760" y="286" font-size="12" fill="var(--muted)" text-anchor="middle">a store node anyway</text>
+  </svg>
+  <p class="sub" style="max-width:none">coords adds one routing option beyond these, a <code>reference</code> delegating a dimension to another convention such as <code>spatial</code>.</p>
+  <div class="takeaway">The overlap is the case for composition.</div>
+</section>
+
+<!-- 15 · consensus -->
+<section>
+  <h2>Consensus from the recent meetings.</h2>
+  <p>The August survey across CF and GeoZarr developers converged on the needs. Eleven coordinate capabilities, nearly all marked <strong>need</strong> by nearly everyone. Explicit 1-D coordinates are a must-have for all, with 2-D coordinates, bounds, and non-standard calendars close behind.</p>
+  <p class="pull">"GeoZarr recommends exactly one way to do each thing."<span class="who">The one disagreement. A deal-breaker for two participants, a preference for most who answered, opposed by one.</span></p>
+  <div class="takeaway">Agreement on <strong>what</strong> to support. Disagreement on one <strong>design principle</strong>, and it looks bridgeable.</div>
+</section>
+
+<!-- 16 · suggestion: compose cs and coords -->
+<section>
+  <h2>Suggestion. Explore composing coords and cs.</h2>
+  <svg class="fig" viewBox="0 0 900 208" role="img" aria-label="coords as discovery layer delegating to cs-shaped descriptors">
+    <defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--primary)"/>
+      </marker>
+    </defs>
+    <rect x="20" y="66" width="230" height="76" rx="12" fill="var(--primary)"/>
+    <text x="135" y="99" font-size="20" font-weight="600" fill="#FFFFFF" text-anchor="middle">coords</text>
+    <text x="135" y="122" font-size="13" fill="#DCE6F3" text-anchor="middle">the one discovery layer</text>
+    <text x="135" y="166" font-size="13" fill="var(--muted)" class="mono" text-anchor="middle">delegates via</text>
+    <text x="135" y="184" font-size="13" fill="var(--muted)" class="mono" text-anchor="middle">type: "reference"</text>
+    <line x1="250" y1="104" x2="430" y2="30"  stroke="var(--primary)" stroke-width="2.5" marker-end="url(#arr)"/>
+    <line x1="250" y1="104" x2="430" y2="80"  stroke="var(--primary)" stroke-width="2.5" marker-end="url(#arr)"/>
+    <line x1="250" y1="104" x2="430" y2="130" stroke="var(--primary)" stroke-width="2.5" marker-end="url(#arr)"/>
+    <line x1="250" y1="104" x2="430" y2="180" stroke="var(--primary)" stroke-width="2.5" marker-end="url(#arr)"/>
+    <rect x="436" y="10"  width="250" height="40" rx="10" fill="var(--tint-1)"/>
+    <text x="452" y="35" font-size="15" fill="var(--base)">cs-shaped · parametric vertical</text>
+    <rect x="436" y="60"  width="250" height="40" rx="10" fill="var(--tint-1)"/>
+    <text x="452" y="85" font-size="15" fill="var(--base)">cs-shaped · compound CRS</text>
+    <rect x="436" y="110" width="250" height="40" rx="10" fill="var(--tint-1)"/>
+    <text x="452" y="135" font-size="15" fill="var(--base)">cs-shaped · calendars</text>
+    <rect x="436" y="160" width="250" height="40" rx="10" fill="var(--tint-2)" stroke="var(--neutral)"/>
+    <text x="452" y="185" font-size="15" fill="var(--muted)">spatial · proj · already v1</text>
+  </svg>
+  <p class="sub" style="max-width:36em">One possible shape to reduce duplication between the drafts while supporting semantic equivalence. One option per coordinate type.</p>
+</section>
+
+<!-- 17 · the trend / what's needed -->
+<section data-background-color="#1F3A5F">
+  <h2>The trend. CF in Zarr should be easy.</h2>
+  <div class="items">
+    <div><p><strong>Simple to write.</strong> Using CF in Zarr should be simple and easy, for data producers and for spec authors.</p></div>
+    <div><p><strong>Nothing breaks.</strong> All software that works with CF today should work with Zarr conventions.</p></div>
+    <div><p><strong>Trivial round trips.</strong> Converting from NetCDF-CF to GeoZarr, and back, should be super easy, with nothing lost in either direction.</p></div>
+  </div>
+  <p style="font-size:.64em">Note that this trend makes the zarr-conventions/CF strawman proposal obsolete. Also, the OGC voting mechanisms need sorting out, so a formal vote is a backstop.</p>
+  <div class="takeaway">The CF community can weigh in on the proposed decomposition, try out the coordinate proposals, bring the evenly-spaced use-case into CF, and help define round-trip acceptance tests.</div>
+</section>
+
+<!-- 18 · references -->
+<section>
+  <h2>References.</h2>
+  <ul style="font-size:.82em">
+    <li><strong>This talk</strong>. <a href="https://github.com/maxrjones/cfworkshop2026-geozarr" target="_blank" rel="noopener">github.com/maxrjones/cfworkshop2026-geozarr</a>. <em>The sst.zarr store is illustrative and appears in no repository.</em></li>
+    <li><strong><a href="https://github.com/zarr-developers/geozarr-spec" target="_blank" rel="noopener">geozarr-spec</a></strong>. Issues <a href="https://github.com/zarr-developers/geozarr-spec/issues/14" target="_blank" rel="noopener">#14</a>, <a href="https://github.com/zarr-developers/geozarr-spec/issues/20" target="_blank" rel="noopener">#20</a>, <a href="https://github.com/zarr-developers/geozarr-spec/issues/52" target="_blank" rel="noopener">#52</a> and <a href="https://github.com/zarr-developers/geozarr-spec/issues/60" target="_blank" rel="noopener">#60</a>. Commit <a href="https://github.com/zarr-developers/geozarr-spec/commit/824906b" target="_blank" rel="noopener"><code>824906b</code></a>, the December 2025 reset.</li>
+    <li><strong>Zarr conventions</strong>. <a href="https://github.com/zarr-conventions/zarr-conventions-spec" target="_blank" rel="noopener">zarr-conventions-spec</a> and the <a href="https://github.com/zarr-conventions/proj" target="_blank" rel="noopener">proj</a>, <a href="https://github.com/zarr-conventions/spatial" target="_blank" rel="noopener">spatial</a>, <a href="https://github.com/zarr-conventions/multiscales" target="_blank" rel="noopener">multiscales</a>, <a href="https://github.com/christophenoel/zarr-coords" target="_blank" rel="noopener">coords</a>, <a href="https://github.com/R-CF/zarr_conventions_cs" target="_blank" rel="noopener">cs</a>, <a href="https://github.com/R-CF/zarr_convention_geolocation" target="_blank" rel="noopener">geolocation</a>, <a href="https://github.com/R-CF/zarr_convention_ref" target="_blank" rel="noopener">ref</a>, <a href="https://github.com/zarr-conventions/nz" target="_blank" rel="noopener">nz</a> and <a href="https://github.com/zarr-conventions/CF" target="_blank" rel="noopener">CF registration</a> repos.</li>
+    <li><strong>CF</strong>. <a href="https://github.com/cf-convention/discuss/discussions/463" target="_blank" rel="noopener">Discussion #463</a>, on decoupling CF from netCDF.</li>
+    <li><strong>Pangeo Discourse</strong>. <a href="https://discourse.pangeo.io/t/example-which-highlights-the-limitations-of-netcdf-style-coordinates-for-large-geospatial-rasters/4140" target="_blank" rel="noopener">"Example which highlights the limitations of netCDF-style coordinates for large geospatial rasters"</a>.</li>
+    <li><strong>SWG records</strong>. <a href="https://geozarr.org/minutes/" target="_blank" rel="noopener">Monthly minutes</a> and <a href="https://docs.google.com/document/d/1LLbp4HdB6rjanOAlXGf6t-7dMuICBKx4YLvZJyjkfw0/edit?tab=t.0#heading=h.hr2z81z0qcmx" target="_blank" rel="noopener">live notes</a>.</li>
+  </ul>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script>
+Reveal.initialize({
+  width: 1280, height: 720, margin: 0.04,
+  hash: true, center: false, transition: 'fade'
+});
+</script>
+</body>
+</html>
